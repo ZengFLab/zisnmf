@@ -4,7 +4,7 @@ This package implements Zero-inflated Supervised Non-negative Matrix Factorizati
 
 ## Installation
 
-You can download the code and install it using pip:
+Users can download the code and install it using pip:
 ```bash
 pip install .
 ```
@@ -20,7 +20,7 @@ from zisnmf import ZISNMF
 # ...
 
 # Create a LSNMF instance
-model = ZISNMF(n_cells, n_features, n_components, n_classes, zero_inflated=True, init_type='random', device='cuda')
+model = ZISNMF(n_cells, n_features, n_classes, n_extra_states,  zero_inflated=True, device='cuda')
 
 # Fit the model
 num_epochs = 30
