@@ -281,19 +281,14 @@ class ZISNMF(nn.Module):
         return M_new,W_new
 
     def transform(self, X, num_epochs=100, learning_rate=0.01, batch_size=64, zero_inflated=True):
-        # Calculate the number of batches
-        num_batches = (X.shape[0] + batch_size - 1) // batch_size  # This ensures we cover all samples
+        dataset = CustomDataset(X, X)
+        dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
+
         M_new = []
         W_new = []
-        with tqdm(total=num_batches, desc='Transforming', unit='batch') as pbar:
-            for batch_idx in range(num_batches):  # Iterate over batches
-                # Get the batch data
-                start_idx = batch_idx * batch_size
-                end_idx = min(start_idx + batch_size, X.shape[0])
-                X_batch = X[start_idx:end_idx]  # Get the current batch
-
+        with tqdm(total=len(dataloader), desc='Transforming', unit='batch') as pbar:
+            for X_batch, _, _ in dataloader:  # Iterate over batches
                 M_batch,W_batch = self.transform_(X_batch, num_epochs, learning_rate, zero_inflated)
-
                 M_new.append(M_batch)
                 W_new.append(W_batch)
 
@@ -312,15 +307,11 @@ class ZISNMF(nn.Module):
         y_scores = []
 
         # Calculate the number of batches
-        num_batches = (X.shape[0] + batch_size - 1) // batch_size  # This ensures we cover all samples
+        dataset = CustomDataset(X, X)
+        dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
 
-        with tqdm(total=num_batches, desc='Predicting', unit='epoch') as pbar:
-            for batch_idx in range(num_batches):  # Iterate over batches
-                # Get the batch data
-                start_idx = batch_idx * batch_size
-                end_idx = min(start_idx + batch_size, X.shape[0])
-                X_batch = X[start_idx:end_idx]  # Get the current batch
-
+        with tqdm(total=len(dataloader), desc='Predicting', unit='epoch') as pbar:
+            for X_batch, _, _ in dataloader:  # Iterate over batches
                 M,_ = self.transform_(X_batch, num_epochs=num_epochs, learning_rate=learning_rate, zero_inflated=zero_inflated)
                 X_new = torch.mm(M, self.V)
 
