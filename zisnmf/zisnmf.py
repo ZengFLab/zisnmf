@@ -289,18 +289,17 @@ class ZISNMF(nn.Module):
         with tqdm(total=len(dataloader), desc='Transforming', unit='batch') as pbar:
             for X_batch, _, _ in dataloader:  # Iterate over batches
                 M_batch,W_batch = self.transform_(X_batch, num_epochs, learning_rate, zero_inflated)
+                
+                M_batch = tensor_to_numpy(M_batch)
+                W_batch = tensor_to_numpy(W_batch)
                 M_new.append(M_batch)
                 W_new.append(W_batch)
 
                 # Update progress bar
                 pbar.update(1)
         
-        M_new = torch.concat(M_new)
-        M_new = tensor_to_numpy(M_new)
-
-        W_new = torch.concat(W_new)
-        W_new = tensor_to_numpy(W_new)
-
+        M_new = np.concatenate(M_new)
+        W_new = np.concatenate(W_new)
         return M_new,W_new
     
     def predict_proba(self, X, num_epochs=100, learning_rate=0.01, batch_size=64, zero_inflated=True):
@@ -315,13 +314,15 @@ class ZISNMF(nn.Module):
                 M,_ = self.transform_(X_batch, num_epochs=num_epochs, learning_rate=learning_rate, zero_inflated=zero_inflated)
                 X_new = torch.mm(M, self.V)
 
-                y_scores.append(self.classifier(X_new))
+                y_batch = self.classifier(X_new)
+                y_batch = tensor_to_numpy(y_batch)
+                y_scores.append(y_batch)
 
                 # Update progress bar
                 pbar.update(1)
 
-        y_scores = torch.concat(y_scores)
-        return tensor_to_numpy(y_scores)
+        y_scores = np.concatenate(y_scores)
+        return y_scores
     
     def predict(self, X, num_epochs=100, learning_rate=0.01, V_only=True, batch_size=64, zero_inflated=True):
         y_scores = self.predict_proba(X, num_epochs, learning_rate, V_only, batch_size, zero_inflated)
