@@ -61,8 +61,8 @@ class MyMLPClassifier(nn.Module):
     def forward(self, x):
         for layer in self.layers:
             x = layer(x)
-        mu = self.fc(x)
-        return mu
+        x = self.fc(x)
+        return x
     
 
 class ZISNMF(nn.Module):
@@ -142,8 +142,8 @@ class ZISNMF(nn.Module):
         return loss
 
     def fit(self, X, L, num_epochs=30, learning_rate=0.001, alpha=0.2, batch_size=1024, patience=10):
-        X = X.to(self.device)
-        L = L.to(self.device)
+        X = move_to_device(X,self.device)
+        L = move_to_device(L,self.device)
         
         dataset = CustomDataset(X, L)
         dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
@@ -160,8 +160,8 @@ class ZISNMF(nn.Module):
             for epoch in range(num_epochs):
                 epoch_loss = 0.0
                 for batch_X, batch_L, batch_indices in dataloader:
-                    batch_X = batch_X.to(self.device)
-                    batch_L = batch_L.to(self.device)
+                    batch_X = move_to_device(batch_X,self.device)
+                    batch_L = move_to_device(batch_L,self.device)
 
                     lam = batch_X.shape[0] / X.shape[0]
 
@@ -200,7 +200,12 @@ class ZISNMF(nn.Module):
                     L_predict = torch.matmul(batch_X, self.V.T)
                     class_loss += F.cross_entropy(L_predict, batch_L)
 
-                    total_loss = reconstruct_loss + class_loss + M_loss + H_loss + sparse_loss
+                    extra_loss = 0
+                    if self.n_extra_states>0:
+                        X_extra = torch.matmul(W_batch, self.H)
+                        extra_loss = alpha * torch.trace(torch.matmul(X_extra, X_extra.T))
+
+                    total_loss = reconstruct_loss + class_loss + M_loss + H_loss + sparse_loss + extra_loss
 
                     # Backward pass
                     optimizer.zero_grad()
@@ -246,7 +251,7 @@ class ZISNMF(nn.Module):
         return self.get_factors()
     
     def transform_(self, X, num_epochs=100, learning_rate=0.01, zero_inflated=True):
-        X = X.to(self.device)
+        X = move_to_device(X,self.device)
         
         # Initialize W for new data
         M_new = torch.rand(X.shape[0], self.n_classes, device=self.device, requires_grad=True)
@@ -279,7 +284,7 @@ class ZISNMF(nn.Module):
         return M_new,W_new
 
     def transform(self, X, num_epochs=100, learning_rate=0.01, batch_size=64, zero_inflated=True):
-        X = X.to(self.device)
+        X = move_to_device(X,self.device)
 
         # Calculate the number of batches
         num_batches = (X.size(0) + batch_size - 1) // batch_size  # This ensures we cover all samples
@@ -301,10 +306,10 @@ class ZISNMF(nn.Module):
                 pbar.update(1)
         
         M_new = torch.concat(M_new)
-        M_new = M_new.detach().cpu().numpy()
+        M_new = tensor_to_numpy(M_new)
 
         W_new = torch.concat(W_new)
-        W_new = W_new.detach().cpu().numpy()
+        W_new = tensor_to_numpy(W_new)
 
         return M_new,W_new
     
@@ -330,7 +335,7 @@ class ZISNMF(nn.Module):
                 pbar.update(1)
 
         y_scores = torch.concat(y_scores)
-        return y_scores.detach().cpu().numpy()
+        return tensor_to_numpy(y_scores)
     
     def predict(self, X, num_epochs=100, learning_rate=0.01, V_only=True, batch_size=64, zero_inflated=True):
         y_scores = self.predict_proba(X, num_epochs, learning_rate, V_only, batch_size, zero_inflated)
@@ -338,13 +343,65 @@ class ZISNMF(nn.Module):
         return y
 
     def get_factors(self):
-        M = self.M.detach().cpu().numpy()
-        V = self.V.detach().cpu().numpy()
+        M = tensor_to_numpy(self.M)
+        V = tensor_to_numpy(self.V)
 
         if self.n_extra_states>0:
-            W = self.W.detach().cpu().numpy()
-            H = self.H.detach().cpu().numpy()
+            W = tensor_to_numpy(self.W)
+            H = tensor_to_numpy(self.H)
         else:
             W,H = None,None
         return M,V,W,H
     
+
+
+def tensor_to_numpy(tensor):
+    """
+    Check if the tensor is on a CUDA device. If yes, detach it, move it to CPU,
+    and convert to a NumPy array. If not, just detach and convert to NumPy.
+
+    Args:
+        tensor (torch.Tensor): The input tensor.
+
+    Returns:
+        np.ndarray: The resulting NumPy array.
+    """
+    # Check if the input is a tensor
+    if not isinstance(tensor, torch.Tensor):
+        raise ValueError("Input must be a torch Tensor.")
+
+    # Detach the tensor from the computation graph
+    tensor = tensor.detach()
+    
+    # Check if the tensor is on CUDA
+    if tensor.is_cuda:
+        tensor = tensor.cpu()
+
+    # Convert to NumPy
+    numpy_array = tensor.numpy()
+    return numpy_array
+
+def move_to_device(data, device):
+    """
+    Checks if the input data is a tensor. If not, converts it to a tensor,
+    checks if the tensor is on the specified device, and moves it if necessary.
+
+    Args:
+        data (any): The input data to check (can be a tensor, list, NumPy array, etc.).
+        device (str or torch.device): The device to check against (e.g., 'cpu', 'cuda', 'cuda:0').
+
+    Returns:
+        torch.Tensor: The tensor on the specified device.
+    """
+    # Convert input data to tensor if it's not already a tensor
+    if not isinstance(data, torch.Tensor):
+        data = torch.tensor(data)
+
+    # Check if the device is a string, and convert it to torch.device if necessary
+    device = torch.device(device) if isinstance(device, str) else device
+
+    # Move the tensor to the specified device if necessary
+    if data.device != device:
+        data = data.to(device)
+    
+    return data
