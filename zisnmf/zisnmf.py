@@ -39,7 +39,7 @@ class MyCNNClassifier(nn.Module):
         x = self.pool(x)  # Shape: (batch_size, 32, length/2)
         x = self.relu(self.conv2(x))
         x = self.pool(x)  # Shape: (batch_size, 64, length/4)
-        x = x.view(x.size(0), -1)  # Flatten the tensor
+        x = x.view(x.shape[0], -1)  # Flatten the tensor
         x = self.relu(self.fc1(x))  # Fully connected layer
         x = self.dropout(x)  # Apply dropout
         x = self.fc2(x)  # Output layer
@@ -141,10 +141,7 @@ class ZISNMF(nn.Module):
 
         return loss
 
-    def fit(self, X, L, num_epochs=30, learning_rate=0.001, alpha=0.2, batch_size=1024, patience=10):
-        X = move_to_device(X,self.device)
-        L = move_to_device(L,self.device)
-        
+    def fit(self, X, L, num_epochs=30, learning_rate=0.001, alpha=0.2, batch_size=1024, patience=10):       
         dataset = CustomDataset(X, L)
         dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
         
@@ -284,17 +281,15 @@ class ZISNMF(nn.Module):
         return M_new,W_new
 
     def transform(self, X, num_epochs=100, learning_rate=0.01, batch_size=64, zero_inflated=True):
-        X = move_to_device(X,self.device)
-
         # Calculate the number of batches
-        num_batches = (X.size(0) + batch_size - 1) // batch_size  # This ensures we cover all samples
+        num_batches = (X.shape[0] + batch_size - 1) // batch_size  # This ensures we cover all samples
         M_new = []
         W_new = []
         with tqdm(total=num_batches, desc='Transforming', unit='batch') as pbar:
             for batch_idx in range(num_batches):  # Iterate over batches
                 # Get the batch data
                 start_idx = batch_idx * batch_size
-                end_idx = min(start_idx + batch_size, X.size(0))
+                end_idx = min(start_idx + batch_size, X.shape[0])
                 X_batch = X[start_idx:end_idx]  # Get the current batch
 
                 M_batch,W_batch = self.transform_(X_batch, num_epochs, learning_rate, zero_inflated)
@@ -317,13 +312,13 @@ class ZISNMF(nn.Module):
         y_scores = []
 
         # Calculate the number of batches
-        num_batches = (X.size(0) + batch_size - 1) // batch_size  # This ensures we cover all samples
+        num_batches = (X.shape[0] + batch_size - 1) // batch_size  # This ensures we cover all samples
 
         with tqdm(total=num_batches, desc='Predicting', unit='epoch') as pbar:
             for batch_idx in range(num_batches):  # Iterate over batches
                 # Get the batch data
                 start_idx = batch_idx * batch_size
-                end_idx = min(start_idx + batch_size, X.size(0))
+                end_idx = min(start_idx + batch_size, X.shape[0])
                 X_batch = X[start_idx:end_idx]  # Get the current batch
 
                 M,_ = self.transform_(X_batch, num_epochs=num_epochs, learning_rate=learning_rate, zero_inflated=zero_inflated)
