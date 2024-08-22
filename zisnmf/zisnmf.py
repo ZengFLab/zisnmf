@@ -128,7 +128,8 @@ class ZISNMF(nn.Module):
     
     def classify_loss(self, x_reconstructed, L):
         class_logits = self.classifier(x_reconstructed)
-        class_loss = F.cross_entropy(class_logits, L)
+        #class_loss = F.cross_entropy(class_logits, L)
+        class_loss = nn.BCELoss()(nn.Sigmoid()(class_logits.view(-1)), L.view(-1))
         return class_loss
 
     def loss_function(self, X, X_reconstructed):
@@ -175,7 +176,8 @@ class ZISNMF(nn.Module):
                     # Compute loss
                     reconstruct_loss = self.loss_function(batch_X, X_reconstructed)
 
-                    M_loss = alpha * F.cross_entropy(M_batch, batch_L)
+                    M_loss = 0
+                    #M_loss = alpha * F.cross_entropy(M_batch, batch_L)
 
                     H_loss = 0
                     if self.n_extra_states>0:
@@ -193,9 +195,6 @@ class ZISNMF(nn.Module):
                     
                     X_reconstructed2 = torch.matmul(M_batch, self.V)
                     class_loss = self.classify_loss(X_reconstructed2, batch_L)
-
-                    L_predict = torch.matmul(batch_X, self.V.T)
-                    class_loss += F.cross_entropy(L_predict, batch_L)
 
                     extra_loss = 0
                     if self.n_extra_states>0:
