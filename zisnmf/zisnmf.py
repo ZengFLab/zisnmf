@@ -107,7 +107,7 @@ class ZISNMF(nn.Module):
         else:
             self.classifier = MyMLPClassifier(n_features, n_classes, hidden_dims).to(self.device)
 
-    def _init_factors(self, X):
+    def _init_factors(self):
         nn.init.xavier_uniform_(self.M)
         nn.init.xavier_uniform_(self.V)
         self.M.data.clamp_(0)
@@ -119,7 +119,7 @@ class ZISNMF(nn.Module):
             self.W.data.clamp_(0)
             self.H.data.clamp_(0)
 
-    def forward(self, X, L, M_batch, W_batch):
+    def forward(self, L, M_batch, W_batch):
         M_masked = M_batch * (L+self.delta)
         X_reconstructed = torch.matmul(M_masked, self.V)
         if self.n_extra_states>0:
@@ -146,13 +146,15 @@ class ZISNMF(nn.Module):
         dataset = CustomDataset(X, L)
         dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
         
-        self._init_factors(X)  # Initialize factors using the input matrix X
+        self._init_factors()  # Initialize factors using the input matrix X
         
         # Exclude self.W from the optimizer
         optimizer = torch.optim.Adam([param for name, param in self.named_parameters() if name != 'W'], lr=learning_rate)
 
         best_loss = float('inf')
         epochs_without_improvement = 0
+        bce_criterion = nn.BCELoss()
+        sigmoid = lambda x: nn.Sigmoid()(x)-0.5
 
         with tqdm(total=num_epochs, desc='Training', unit='epoch') as pbar:
             for epoch in range(num_epochs):
@@ -171,13 +173,13 @@ class ZISNMF(nn.Module):
                         W_batch = None
 
                     # Forward pass
-                    X_reconstructed = self.forward(batch_X, batch_L, M_batch, W_batch)
+                    X_reconstructed = self.forward(batch_L, M_batch, W_batch)
 
                     # Compute loss
                     reconstruct_loss = self.loss_function(batch_X, X_reconstructed)
 
                     M_loss = 0
-                    #M_loss = alpha * F.cross_entropy(M_batch, batch_L)
+                    #M_loss += alpha * F.cross_entropy(M_batch, batch_L)
 
                     H_loss = 0
                     if self.n_extra_states>0:
