@@ -129,7 +129,7 @@ class ZISNMF(nn.Module):
     def classify_loss(self, x_reconstructed, L):
         class_logits = self.classifier(x_reconstructed)
         #class_loss = F.cross_entropy(class_logits, L)
-        class_loss = nn.BCELoss()(nn.Sigmoid()(class_logits.view(-1)), L.view(-1))
+        class_loss = nn.BCELoss()(nn.Sigmoid()(class_logits.reshape(-1)), L.reshape(-1))
         return class_loss
 
     def loss_function(self, X, X_reconstructed):
