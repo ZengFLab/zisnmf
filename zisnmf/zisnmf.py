@@ -192,8 +192,6 @@ class ZISNMF(nn.Module):
                     if self.n_extra_states>0:
                         sparse_loss += alpha * torch.norm(W_batch, p=1)
                         sparse_loss += lam * alpha * torch.norm(self.H, p=1)
-                    else:
-                        sparse_loss += lam * alpha * torch.norm(self.H, p=1)
                     
                     X_reconstructed2 = torch.matmul(M_batch, self.V)
                     class_loss = self.classify_loss(X_reconstructed2, batch_L)
@@ -221,8 +219,9 @@ class ZISNMF(nn.Module):
                     # Project W, H, and B to nonnegative space
                     self.M.data.clamp_(0)
                     self.V.data.clamp_(0)
-                    self.W.data.clamp_(0)
-                    self.H.data.clamp_(0)
+                    if self.n_extra_states>0:
+                        self.W.data.clamp_(0)
+                        self.H.data.clamp_(0)
 
                     epoch_loss += total_loss.item()
 
