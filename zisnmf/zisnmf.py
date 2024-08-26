@@ -142,19 +142,17 @@ class ZISNMF(nn.Module):
 
         return loss
 
-    def fit(self, X, L, num_epochs=30, learning_rate=0.001, alpha=0.2, batch_size=1024, patience=10):       
+    def fit(self, X, L, num_epochs=30, learning_rate=0.001, alpha=0.2, batch_size=1024, patience=10):    
         dataset = CustomDataset(X, L)
         dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
         
         self._init_factors()  # Initialize factors using the input matrix X
         
         # Exclude self.W from the optimizer
-        optimizer = torch.optim.Adam([param for name, param in self.named_parameters() if name != 'W'], lr=learning_rate)
+        optimizer = torch.optim.Adam([param for name, param in self.named_parameters() if ((name != 'W') and (name != 'M'))], lr=learning_rate)
 
         best_loss = float('inf')
         epochs_without_improvement = 0
-        bce_criterion = nn.BCELoss()
-        sigmoid = lambda x: nn.Sigmoid()(x)-0.5
 
         with tqdm(total=num_epochs, desc='Training', unit='epoch') as pbar:
             for epoch in range(num_epochs):
@@ -179,7 +177,7 @@ class ZISNMF(nn.Module):
                     reconstruct_loss = self.loss_function(batch_X, X_reconstructed)
 
                     M_loss = 0
-                    #M_loss += alpha * F.cross_entropy(M_batch, batch_L)
+                    M_loss += alpha * F.cross_entropy(M_batch, batch_L)
 
                     H_loss = 0
                     if self.n_extra_states>0:
@@ -196,12 +194,11 @@ class ZISNMF(nn.Module):
                     X_reconstructed2 = torch.matmul(M_batch, self.V)
                     class_loss = self.classify_loss(X_reconstructed2, batch_L)
 
-                    extra_loss = 0
-                    if self.n_extra_states>0:
-                        X_extra = torch.matmul(W_batch, self.H)
-                        extra_loss = alpha * torch.trace(torch.matmul(X_extra, X_extra.T))
+                    # pattern matching
+                    L_predict = torch.mm(batch_X, self.V.T)
+                    class_loss += F.cross_entropy(L_predict, batch_L)
 
-                    total_loss = reconstruct_loss + class_loss + M_loss + H_loss + sparse_loss + extra_loss
+                    total_loss = reconstruct_loss + class_loss + M_loss + H_loss + sparse_loss
 
                     # Backward pass
                     optimizer.zero_grad()
