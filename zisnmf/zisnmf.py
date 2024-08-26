@@ -75,6 +75,7 @@ class ZISNMF(nn.Module):
         self.n_features = n_features
         self.n_extra_states = n_extra_states
         self.n_classes = n_classes
+        self.n_states = n_classes + n_extra_states
         self.random_seed = random_seed
         self.delta = delta
         self.zero_inflated = zero_inflated
@@ -90,11 +91,8 @@ class ZISNMF(nn.Module):
         if self.device.type == 'cuda':
             torch.cuda.manual_seed(self.random_seed)
         
-        self.M = nn.Parameter(torch.empty(n_cells, n_classes, device=self.device))
-        self.V = nn.Parameter(torch.empty(n_classes, n_features, device=self.device))
-        if self.n_extra_states>0:
-            self.W = nn.Parameter(torch.empty(n_cells, n_extra_states, device=self.device))
-            self.H = nn.Parameter(torch.empty(n_extra_states, n_features, device=self.device))
+        self.W = nn.Parameter(torch.empty(n_cells, self.n_states, device=self.device))
+        self.H = nn.Parameter(torch.empty(self.n_states, n_features, device=self.device))
 
         # Define the layers for dropout rate
         self.dropout_rate = DropoutRate(n_features, hidden_dims=hidden_dims).to(self.device)
@@ -108,22 +106,19 @@ class ZISNMF(nn.Module):
             self.classifier = MyMLPClassifier(n_features, n_classes, hidden_dims).to(self.device)
 
     def _init_factors(self):
-        nn.init.xavier_uniform_(self.M)
-        nn.init.xavier_uniform_(self.V)
-        self.M.data.clamp_(0)
-        self.V.data.clamp_(0)
+        nn.init.xavier_uniform_(self.W)
+        nn.init.xavier_uniform_(self.H)
+        self.W.data.clamp_(0)
+        self.H.data.clamp_(0)
 
+    def forward(self, L, W_batch):
         if self.n_extra_states>0:
-            nn.init.xavier_uniform_(self.W)
-            nn.init.xavier_uniform_(self.H)
-            self.W.data.clamp_(0)
-            self.H.data.clamp_(0)
-
-    def forward(self, L, M_batch, W_batch):
-        M_masked = M_batch * (L+self.delta)
-        X_reconstructed = torch.matmul(M_masked, self.V)
-        if self.n_extra_states>0:
-            X_reconstructed += torch.mm(W_batch, self.H)
+            W_masked = torch.zeros_like(W_batch)
+            W_masked[:,:self.n_classes] = W_batch[:,:self.n_classes] * (L+self.delta)
+            W_masked[:,self.n_classes:] = W_batch[:,self.n_classes:]
+        else:
+            W_masked = W_batch * (L+self.delta)
+        X_reconstructed = torch.matmul(W_masked, self.H)
         return X_reconstructed
     
     def classify_loss(self, x_reconstructed, L):
@@ -135,7 +130,7 @@ class ZISNMF(nn.Module):
     def loss_function(self, X, X_reconstructed):
         if self.zero_inflated:
             pi = self.dropout_rate(X)
-            self.sigma.data.clamp_(0.1)
+            self.sigma.data.clamp_(0.01)
             loss = zig_nll(X, pi, X_reconstructed, self.sigma)
         else:
             loss = torch.norm(X-X_reconstructed, p=2) ** 2
@@ -149,7 +144,7 @@ class ZISNMF(nn.Module):
         self._init_factors()  # Initialize factors using the input matrix X
         
         # Exclude self.W from the optimizer
-        optimizer = torch.optim.Adam([param for name, param in self.named_parameters() if ((name != 'W') and (name != 'M'))], lr=learning_rate)
+        optimizer = torch.optim.Adam([param for name, param in self.named_parameters() if (name != 'W')], lr=learning_rate)
 
         best_loss = float('inf')
         epochs_without_improvement = 0
@@ -164,38 +159,34 @@ class ZISNMF(nn.Module):
                     lam = batch_X.shape[0] / X.shape[0]
 
                     # Slice and clone the corresponding rows of W for the current batch with requires_grad=True
-                    M_batch = self.M[batch_indices].clone().detach().requires_grad_(True)
-                    if self.n_extra_states>0:
-                        W_batch = self.W[batch_indices].clone().detach().requires_grad_(True)
-                    else:
-                        W_batch = None
+                    W_batch = self.W[batch_indices].clone().detach().requires_grad_(True)
 
                     # Forward pass
-                    X_reconstructed = self.forward(batch_L, M_batch, W_batch)
+                    X_reconstructed = self.forward(batch_L, W_batch)
 
                     # Compute loss
                     reconstruct_loss = self.loss_function(batch_X, X_reconstructed)
 
                     M_loss = 0
-                    M_loss += alpha * F.cross_entropy(M_batch, batch_L)
+                    M_loss += alpha * F.cross_entropy(W_batch[:,:self.n_classes], batch_L)
 
                     H_loss = 0
                     if self.n_extra_states>0:
-                        tmp_VH = lam * torch.matmul(self.V, self.H.T)
-                        H_loss = alpha * torch.norm(tmp_VH, p=2) ** 2
-                        tmp_HH = lam * torch.matmul(self.H, self.H.T)
-                        H_loss += alpha * torch.norm(tmp_HH-torch.eye(tmp_HH.shape[0]).to(self.device), p=2) ** 2
+                        tmp_H1H2 = lam * torch.matmul(self.H[:self.n_classes,:], self.H[self.n_classes:,:].T)
+                        H_loss = alpha * torch.norm(tmp_H1H2, p=2) ** 2
+                        tmp_H2H2 = lam * torch.matmul(self.H[self.n_classes:,:], self.H[self.n_classes:,:].T)
+                        H_loss += alpha * torch.norm(tmp_H2H2-torch.eye(tmp_H2H2.shape[0]).to(self.device), p=2) ** 2
 
                     sparse_loss = 0
                     if self.n_extra_states>0:
-                        sparse_loss += alpha * torch.norm(W_batch, p=1)
-                        sparse_loss += lam * alpha * torch.norm(self.H, p=1)
+                        sparse_loss = alpha * torch.norm(W_batch[:,self.n_classes:], p=1)
+                        sparse_loss += lam * alpha * torch.norm(self.H[self.n_classes:,:], p=1)
                     
-                    X_reconstructed2 = torch.matmul(M_batch, self.V)
+                    X_reconstructed2 = torch.matmul(W_batch[:,:self.n_classes], self.H[:self.n_classes,:])
                     class_loss = self.classify_loss(X_reconstructed2, batch_L)
 
-                    # pattern matching
-                    L_predict = torch.mm(batch_X, self.V.T)
+                    # pattern match
+                    L_predict = torch.matmul(batch_X, self.H[:self.n_classes,:].T)
                     class_loss += F.cross_entropy(L_predict, batch_L)
 
                     total_loss = reconstruct_loss + class_loss + M_loss + H_loss + sparse_loss
@@ -206,19 +197,14 @@ class ZISNMF(nn.Module):
 
                     # Manually update W_batch
                     with torch.no_grad():
-                        self.M[batch_indices] -= learning_rate * M_batch.grad
-                        if self.n_extra_states>0:
-                            self.W[batch_indices] -= learning_rate * W_batch.grad
+                        self.W[batch_indices] -= learning_rate * W_batch.grad
 
                     # Step the optimizer to update other parameters
                     optimizer.step()
 
                     # Project W, H, and B to nonnegative space
-                    self.M.data.clamp_(0)
-                    self.V.data.clamp_(0)
-                    if self.n_extra_states>0:
-                        self.W.data.clamp_(0)
-                        self.H.data.clamp_(0)
+                    self.W.data.clamp_(0)
+                    self.H.data.clamp_(0)
 
                     epoch_loss += total_loss.item()
 
@@ -248,16 +234,15 @@ class ZISNMF(nn.Module):
         X = move_to_device(X,self.device)
         
         # Initialize W for new data
-        M_new = torch.rand(X.shape[0], self.n_classes, device=self.device, requires_grad=True)
-        W_new = torch.rand(X.shape[0], self.n_extra_states, device=self.device, requires_grad=True)
+        W_new = torch.rand(X.shape[0], self.n_states, device=self.device, requires_grad=True)
             
         # Optimize W while keeping H fixed
-        optimizer = torch.optim.Adam([M_new, W_new], lr=learning_rate)
+        optimizer = torch.optim.Adam([W_new], lr=learning_rate)
             
         if True:
             for _ in range(num_epochs):  # Adjust the number of iterations as needed
                 # Compute the reconstructed matrix
-                X_reconstructed = torch.mm(M_new, self.V) + torch.mm(W_new, self.H)
+                X_reconstructed = torch.mm(W_new, self.H)
                 
                 # Compute the loss
                 if zero_inflated:
@@ -272,9 +257,10 @@ class ZISNMF(nn.Module):
                 optimizer.step()
                 
                 # Project W_new to nonnegative space
-                M_new.data.clamp_(0)
                 W_new.data.clamp_(0)
 
+        M_new = W_new[:,:self.n_classes]
+        W_new = W_new[:,self.n_classes:]
         return M_new,W_new
 
     def transform(self, X, num_epochs=100, learning_rate=0.01, batch_size=64, zero_inflated=True):
@@ -309,7 +295,7 @@ class ZISNMF(nn.Module):
         with tqdm(total=len(dataloader), desc='Predicting', unit='epoch') as pbar:
             for X_batch, _, _ in dataloader:  # Iterate over batches
                 M,_ = self.transform_(X_batch, num_epochs=num_epochs, learning_rate=learning_rate, zero_inflated=zero_inflated)
-                X_new = torch.mm(M, self.V)
+                X_new = torch.mm(M, self.H[:self.n_classes,:])
 
                 y_batch = self.classifier(X_new)
                 y_batch = tensor_to_numpy(y_batch)
@@ -327,12 +313,12 @@ class ZISNMF(nn.Module):
         return y
 
     def get_factors(self):
-        M = tensor_to_numpy(self.M)
-        V = tensor_to_numpy(self.V)
+        M = tensor_to_numpy(self.W[:,:self.n_classes])
+        V = tensor_to_numpy(self.H[:self.n_classes,:])
 
         if self.n_extra_states>0:
-            W = tensor_to_numpy(self.W)
-            H = tensor_to_numpy(self.H)
+            W = tensor_to_numpy(self.W[:,self.n_classes:])
+            H = tensor_to_numpy(self.H[self.n_classes:,:])
         else:
             W,H = None,None
         return M,V,W,H
