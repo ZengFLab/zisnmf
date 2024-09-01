@@ -137,14 +137,25 @@ class ZISNMF(nn.Module):
 
         return loss
 
-    def fit(self, X, L, num_epochs=30, learning_rate=0.001, alpha=0.2, batch_size=1024, patience=10):    
+    def fit(self, X, L, num_epochs=30, learning_rate=0.001, alpha=0.2, batch_size=1024, patience=10, algo='adam'):    
         dataset = CustomDataset(X, L)
         dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
         
         self._init_factors()  # Initialize factors using the input matrix X
         
         # Exclude self.W from the optimizer
-        optimizer = torch.optim.Adam([param for name, param in self.named_parameters() if (name != 'W')], lr=learning_rate)
+        if algo.lower() == 'adam':
+            optimizer = torch.optim.Adam([param for name, param in self.named_parameters() if (name != 'W')], lr=learning_rate)
+        elif algo.lower() == 'adamw':
+            optimizer = torch.optim.AdamW([param for name, param in self.named_parameters() if (name != 'W')], lr=learning_rate)
+        elif algo.lower() == 'rmsprop':
+            optimizer = torch.optim.RMSprop([param for name, param in self.named_parameters() if (name != 'W')], lr=learning_rate)
+        elif algo.lower() == 'sgd':
+            optimizer = torch.optim.SGD([param for name, param in self.named_parameters() if (name != 'W')], lr=learning_rate)
+        elif algo.lower() == 'asgd':
+            optimizer = torch.optim.ASGD([param for name, param in self.named_parameters() if (name != 'W')], lr=learning_rate)
+        else:
+            raise ValueError("An optimization algorithm must be specified.")
 
         best_loss = float('inf')
         epochs_without_improvement = 0
@@ -226,18 +237,29 @@ class ZISNMF(nn.Module):
                 pbar.set_postfix({'loss': epoch_loss})
                 pbar.update(1)
 
-    def fit_transform(self, X, L, num_epochs=30, learning_rate=0.001, alpha=0.2, batch_size=1024, patience=10):
-        self.fit(X, L, num_epochs, learning_rate, alpha, batch_size, patience)
+    def fit_transform(self, X, L, num_epochs=30, learning_rate=0.001, alpha=0.2, batch_size=1024, patience=10, algo='adam'):
+        self.fit(X, L, num_epochs, learning_rate, alpha, batch_size, patience, algo=algo)
         return self.get_factors()
     
-    def transform_(self, X, num_epochs=100, learning_rate=0.01, zero_inflated=True):
+    def _transform(self, X, num_epochs=100, learning_rate=0.01, zero_inflated=True, algo='adam'):
         X = move_to_device(X,self.device)
         
         # Initialize W for new data
         W_new = torch.rand(X.shape[0], self.n_states, device=self.device, requires_grad=True)
             
         # Optimize W while keeping H fixed
-        optimizer = torch.optim.Adam([W_new], lr=learning_rate)
+        if algo.lower() == 'adam':
+            optimizer = torch.optim.Adam([W_new], lr=learning_rate)
+        elif algo.lower() == 'adamw':
+            optimizer = torch.optim.AdamW([W_new], lr=learning_rate)
+        elif algo.lower() == 'rmsprop':
+            optimizer = torch.optim.RMSprop([W_new], lr=learning_rate)
+        elif algo.lower() == 'sgd':
+            optimizer = torch.optim.SGD([W_new], lr=learning_rate)
+        elif algo.lower() == 'asgd':
+            optimizer = torch.optim.ASGD([W_new], lr=learning_rate)
+        else:
+            raise ValueError("An optimization algorithm must be specified.")
             
         if True:
             for _ in range(num_epochs):  # Adjust the number of iterations as needed
@@ -271,7 +293,7 @@ class ZISNMF(nn.Module):
         W_new = []
         with tqdm(total=len(dataloader), desc='Transforming', unit='batch') as pbar:
             for X_batch, _, _ in dataloader:  # Iterate over batches
-                M_batch,W_batch = self.transform_(X_batch, num_epochs, learning_rate, zero_inflated)
+                M_batch,W_batch = self._transform(X_batch, num_epochs, learning_rate, zero_inflated)
                 
                 M_batch = tensor_to_numpy(M_batch)
                 W_batch = tensor_to_numpy(W_batch)
@@ -294,7 +316,7 @@ class ZISNMF(nn.Module):
 
         with tqdm(total=len(dataloader), desc='Predicting', unit='epoch') as pbar:
             for X_batch, _, _ in dataloader:  # Iterate over batches
-                M,_ = self.transform_(X_batch, num_epochs=num_epochs, learning_rate=learning_rate, zero_inflated=zero_inflated)
+                M,_ = self._transform(X_batch, num_epochs=num_epochs, learning_rate=learning_rate, zero_inflated=zero_inflated)
                 X_new = torch.mm(M, self.H[:self.n_classes,:])
 
                 y_batch = self.classifier(X_new)
